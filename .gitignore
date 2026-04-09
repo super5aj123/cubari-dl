@@ -1,2 +1,7 @@
 .DS_Store
 __pycache__
+build/
+buildLogs/
+buildWork/
+dist/
+Dev_compileMacOS.sh

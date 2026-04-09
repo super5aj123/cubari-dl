@@ -40,7 +40,12 @@ def normalizeURL(url):
 def getJson(url:str, httpSession): #Get the raw JSON from the URL.
     response = httpSession.get(normalizeURL(url), timeout=30)
     response.raise_for_status()
-    return response.json()
+
+    try:
+        return response.json()
+    except requests.exceptions.JSONDecodeError as e:
+        contentType = response.headers.get("Content-Type", "").split(";")[0].lower()
+        raise ValueError(f"Expected JSON from {normalizeURL(url)} but got {contentType or 'unknown content type'}") from e
 
 def sanitizeName(name, fallbackName):
     safeName = "".join(character if character.isalnum() or character in (" ", "-", "_", ".") else "_" for character in str(name))
@@ -86,6 +91,21 @@ def isImageURL(url):
     imagePath = urlparse(url).path.lower()
     return imagePath.endswith((".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp", ".avif"))
 
+def isLikelySourceURL(sourceText):
+    if not isinstance(sourceText, str):
+        return False
+
+    sourceText = sourceText.strip()
+    if not sourceText:
+        return False
+
+    if sourceText.startswith("/"):
+        return True
+    if sourceText.startswith("http://") or sourceText.startswith("https://"):
+        return True
+
+    return False
+
 def getOutputMode():
     while True:
         outputChoice = input("Choose output type (1 = PDF, 2 = Images): ").strip()
@@ -105,12 +125,20 @@ def resolveImageURLs(sourceData, httpSession):
         return imageURLs
 
     if isinstance(sourceData, dict):
+        for sourceKey in ("src", "url", "image", "imageUrl", "imageURL", "file", "fileUrl", "fileURL"):
+            if sourceKey in sourceData and isLikelySourceURL(sourceData[sourceKey]):
+                return resolveImageURLs(sourceData[sourceKey], httpSession)
+
         imageURLs = []
         for sourceItem in sourceData.values():
             imageURLs.extend(resolveImageURLs(sourceItem, httpSession))
         return imageURLs
 
     if isinstance(sourceData, str):
+        sourceData = sourceData.strip()
+        if not isLikelySourceURL(sourceData):
+            return []
+
         sourceURL = normalizeURL(sourceData)
 
         if isImageURL(sourceURL):
@@ -146,8 +174,15 @@ def getGroupImageURLs(groups, httpSession):
 
     for groupName, groupData in groups.items():
         print(f"Group: {groupName}")
-        imageURLs = resolveImageURLs(groupData, httpSession)
-        groupImageURLs.append((groupName, imageURLs))
+
+        try:
+            imageURLs = resolveImageURLs(groupData, httpSession)
+            if imageURLs:
+                groupImageURLs.append((groupName, imageURLs))
+            else:
+                print(f"No images found for group {groupName}")
+        except Exception as e:
+            print(f"Failed to resolve group {groupName} - {str(e)}")
 
     return groupImageURLs
 
